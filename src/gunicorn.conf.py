@@ -20,6 +20,14 @@ from azure.ai.projects.models import FileSearchTool, AzureAISearchAgentTool, Too
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 
+from azure.ai.projects.models import (
+    EvaluationRule, 
+    ContinuousEvaluationRuleAction, 
+    EvaluationRuleFilter,
+    EvaluationRuleEventType
+)
+
+
 from logging_config import configure_logging
 
 load_dotenv()
@@ -220,6 +228,43 @@ async def initialize_resources():
                 logger.info(f"Created agent, agent ID: {agent_obj.id}")
 
             os.environ["AZURE_EXISTING_AGENT_ID"] = agent_obj.id
+
+            # Create Continuous Evaluation testing criteria and trigger rule
+            openai_client = await ai_project.get_openai_client()            
+            eval_object = openai_client.evals.create(
+                name="Continuous Evaluation",
+                data_source_config={
+                    "type": "azure_ai_source",
+                    "scenario": "responses"
+                },
+                testing_criteria=[
+                    {
+                        "type": "azure_ai_evaluator",
+                        "name": "violence_detection",
+                        "evaluator_name": "builtin.violence"
+                    } # Add more testing criteria as needed
+                ]
+            )
+            logger.info(f"Evaluation created (id: {eval_object.id}, name: {eval_object.name})")
+
+            continuous_eval_rule = ai_project.evaluation_rules.create_or_update(
+                id="my-continuous-eval-rule",
+                evaluation_rule=EvaluationRule(
+                    display_name="My Continuous Eval Rule",
+                    description="Evaluate agent responses continuously",
+                    action=ContinuousEvaluationRuleAction(
+                        eval_id=eval_object.id,
+                        max_hourly_runs=10 # up to 10 evaluations per hour
+                    ),
+                    event_type=EvaluationRuleEventType.RESPONSE_COMPLETED,
+                    filter=EvaluationRuleFilter(
+                        agent_name=agent_obj.name
+                    ),
+                    enabled=True # Reead from env variable?
+                )
+            )
+            logger.info(f"Continuous Evaluation Rule created (id: {continuous_eval_rule.id}, name: {continuous_eval_rule.display_name})")
+
 
     except Exception as e:
         logger.info("Error creating agent: {e}", exc_info=True)
