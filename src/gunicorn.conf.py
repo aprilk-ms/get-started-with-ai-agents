@@ -179,84 +179,29 @@ async def create_agent(ai_project: AIProjectClient,
     return agent
 
 async def initialize_eval(project_client: AIProjectClient, agent: AgentVersionObject):
-    print("Creating a single evaluator version - Prompt based (json style)")
-    prompt_evaluator = await project_client.evaluators.create_version(
-        name="my_custom_evaluator_prompt",
-        evaluator_version={
-            "name": "my_custom_evaluator_prompt",
-            "categories": [EvaluatorCategory.QUALITY],
-            "display_name": "my_custom_evaluator_prompt",
-            "description": "Custom evaluator to for groundedness",
-            "definition": {
-                "type": EvaluatorDefinitionType.PROMPT,
-                "prompt_text": """
-                        You are a Groundedness Evaluator.
-
-                        Your task is to evaluate how well the given response is grounded in the provided ground truth.
-                        Groundedness means the response's statements are factually supported by the ground truth.
-                        Evaluate factual alignment only — ignore grammar, fluency, or completeness.
-
-                        ---
-
-                        ### Input:
-                        Query:
-                        {query}
-
-                        Response:
-                        {response}
-
-                        Ground Truth:
-                        {ground_truth}
-
-                        ---
-
-                        ### Scoring Scale (1-5):
-                        5 → Fully grounded. All claims supported by ground truth.  
-                        4 → Mostly grounded. Minor unsupported details.  
-                        3 → Partially grounded. About half the claims supported.  
-                        2 → Mostly ungrounded. Only a few details supported.  
-                        1 → Not grounded. Almost all information unsupported.
-
-                        ---
-
-                        ### Output should be Integer:
-                        <integer from 1 to 5>
-                """,
-                "init_parameters": {
-                    "type": "object",
-                    "properties": {"deployment_name": {"type": "string"}, "threshold": {"type": "number"}},
-                    "required": ["deployment_name"],
-                },
-                "data_schema": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
-                        "response": {"type": "string"},
-                        "ground_truth": {"type": "string"},
-                    },
-                    "required": ["query", "response", "ground_truth"],
-                },
-                "metrics": {
-                    "tool_selection": {
-                        "type": "ordinal",
-                        "desirable_direction": "increase",
-                        "min_value": 1,
-                        "max_value": 5,
-                    }
-                },
-            },
-        },
-    )
-
-    print(f"Evaluator version created (id: {prompt_evaluator.id}, name: {prompt_evaluator.name})")
-
+        
     print("Creating continuous evaluation rule to run evaluator on agent responses")
+
+    openai_client = project_client.get_openai_client()
+
+    # Create an evaluation which specifies the testing criteria (e.g. violence detection)
+    data_source_config = {"type": "azure_ai_source", "scenario": "responses"}
+    testing_criteria = [
+        {"type": "azure_ai_evaluator", "name": "violence_detection", "evaluator_name": "builtin.violence"}
+    ]
+    eval_object = openai_client.evals.create(
+        name="Continuous Evaluation",
+        data_source_config=data_source_config, # type: ignore
+        testing_criteria=testing_criteria, # type: ignore
+    )
+    print(f"Evaluation created (id: {eval_object.id}, name: {eval_object.name})")
+
     continuous_eval_rule = await project_client.evaluation_rules.create_or_update(
         id="my-continuous-eval-rule",
         evaluation_rule=EvaluationRule(
             display_name="My Continuous Eval Rule",
             description="An eval rule that runs on agent response completions",
-            action=ContinuousEvaluationRuleAction(eval_id=prompt_evaluator.id, max_hourly_runs=10),
+            action=ContinuousEvaluationRuleAction(eval_id=eval_object.id, max_hourly_runs=10),
             event_type=EvaluationRuleEventType.RESPONSE_COMPLETED,
             filter=EvaluationRuleFilter(agent_name=agent.name),
             enabled=True,
@@ -265,7 +210,6 @@ async def initialize_eval(project_client: AIProjectClient, agent: AgentVersionOb
     print(
         f"Continuous Evaluation Rule created (id: {continuous_eval_rule.id}, name: {continuous_eval_rule.display_name})"
     )
-
 
 
 async def initialize_resources():
